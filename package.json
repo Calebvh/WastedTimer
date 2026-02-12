@@ -1,0 +1,14 @@
+{
+  "name": "wasted-timer",
+  "version": "1.0.0",
+  "description": "Firefox extension to track time spent on configurable websites",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "clean": "rm -rf dist"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.0",
+    "@types/firefox-webext-browser": "^120.0.0"
+  }
+}
