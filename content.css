@@ -75,8 +75,9 @@
 .wasted-timer-value {
   font-weight: 600;
   font-size: 14px;
-  color: #4fc3f7;
+  color: #4caf50;
   font-variant-numeric: tabular-nums;
+  transition: color 0.3s ease;
 }
 
 /* Minimized state - small icon */

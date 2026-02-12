@@ -7,17 +7,31 @@
     weeklyTotal: number;
   }
 
+  interface Settings {
+    resetDay: number;
+    dailyLimitMinutes: number;
+    weeklyLimitMinutes: number;
+  }
+
   interface CheckTrackedResponse {
     isTracked: boolean;
     isSnoozed?: boolean;
     matchedPattern?: string;
     siteTime?: string;
     weeklyTotal?: string;
+    siteTimeSeconds?: number;
+    weeklyTotalSeconds?: number;
+    dailyLimitSeconds?: number;
+    weeklyLimitSeconds?: number;
   }
 
   interface GetTimeDataResponse {
     siteTime: string;
     weeklyTotal: string;
+    siteTimeSeconds: number;
+    weeklyTotalSeconds: number;
+    dailyLimitSeconds: number;
+    weeklyLimitSeconds: number;
   }
 
   interface Message {
@@ -34,11 +48,17 @@
   let activeTabUrl: string | null = null;
   let activeMatchedPattern: string | null = null;
   let trackedPatterns: TrackedPatterns = { domains: [], urls: [] };
+  let settings: Settings = {
+    resetDay: 0,
+    dailyLimitMinutes: 60,
+    weeklyLimitMinutes: 420
+  };
   const snoozeState: Record<number, number> = {}; // tabId -> snoozeEndTime
 
   // Initialize extension
   async function init(): Promise<void> {
     await loadTrackedPatterns();
+    await loadSettings();
 
     // Start the tracking interval
     setInterval(updateTime, 1000);
@@ -60,6 +80,9 @@
         if (changes.trackedUrls) {
           trackedPatterns.urls = changes.trackedUrls.newValue || [];
         }
+        if (changes.settings) {
+          settings = changes.settings.newValue || settings;
+        }
       }
     });
 
@@ -77,6 +100,14 @@
     const result = await browser.storage.sync.get(['trackedDomains', 'trackedUrls']);
     trackedPatterns.domains = (result.trackedDomains as string[]) || [];
     trackedPatterns.urls = (result.trackedUrls as string[]) || [];
+  }
+
+  // Load settings from storage
+  async function loadSettings(): Promise<void> {
+    const result = await browser.storage.sync.get(['settings']);
+    if (result.settings) {
+      settings = result.settings as Settings;
+    }
   }
 
   // Extract domain from URL
@@ -130,13 +161,20 @@
     return null;
   }
 
-  // Get the current week's start date (Sunday)
+  // Get the current week's start date based on configured reset day
   function getWeekStartDate(): string {
     const now = new Date();
-    const day = now.getDay(); // 0 = Sunday
-    const diff = now.getDate() - day;
+    const currentDay = now.getDay();
+    const resetDay = settings.resetDay;
+
+    // Calculate days since the reset day
+    let daysSinceReset = currentDay - resetDay;
+    if (daysSinceReset < 0) {
+      daysSinceReset += 7;
+    }
+
     const weekStart = new Date(now);
-    weekStart.setDate(diff);
+    weekStart.setDate(now.getDate() - daysSinceReset);
     weekStart.setHours(0, 0, 0, 0);
     return weekStart.toISOString().split('T')[0];
   }
@@ -286,7 +324,11 @@
               isSnoozed,
               matchedPattern,
               siteTime: formatTime(timeData.siteTime),
-              weeklyTotal: formatTime(timeData.weeklyTotal)
+              weeklyTotal: formatTime(timeData.weeklyTotal),
+              siteTimeSeconds: timeData.siteTime,
+              weeklyTotalSeconds: timeData.weeklyTotal,
+              dailyLimitSeconds: settings.dailyLimitMinutes * 60,
+              weeklyLimitSeconds: settings.weeklyLimitMinutes * 60
             };
           }
           return { isTracked: false };
@@ -300,7 +342,11 @@
             const timeData = await getTimeData(matchedPattern);
             return {
               siteTime: formatTime(timeData.siteTime),
-              weeklyTotal: formatTime(timeData.weeklyTotal)
+              weeklyTotal: formatTime(timeData.weeklyTotal),
+              siteTimeSeconds: timeData.siteTime,
+              weeklyTotalSeconds: timeData.weeklyTotal,
+              dailyLimitSeconds: settings.dailyLimitMinutes * 60,
+              weeklyLimitSeconds: settings.weeklyLimitMinutes * 60
             };
           }
           return null;

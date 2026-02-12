@@ -83,7 +83,8 @@
       color: rgba(255, 255, 255, 0.4);
     }
 
-    .add-form button {
+    .add-form button,
+    .settings-form button {
       padding: 12px 24px;
       border: none;
       border-radius: 8px;
@@ -95,7 +96,8 @@
       transition: background 0.2s;
     }
 
-    .add-form button:hover {
+    .add-form button:hover,
+    .settings-form button:hover {
       background: #81d4fa;
     }
 
@@ -181,6 +183,73 @@
       background: rgba(255, 183, 77, 0.2);
       color: #ffb74d;
     }
+
+    .badge-settings {
+      background: rgba(186, 104, 200, 0.2);
+      color: #ba68c8;
+    }
+
+    .settings-form {
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      padding: 20px;
+    }
+
+    .form-group {
+      margin-bottom: 20px;
+    }
+
+    .form-group:last-of-type {
+      margin-bottom: 24px;
+    }
+
+    .form-group label {
+      display: block;
+      font-size: 14px;
+      font-weight: 500;
+      margin-bottom: 8px;
+      color: rgba(255, 255, 255, 0.9);
+    }
+
+    .form-group .hint {
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.4);
+      margin-top: 6px;
+    }
+
+    .form-group select,
+    .form-group input[type="number"] {
+      width: 100%;
+      padding: 12px 16px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.05);
+      color: #fff;
+      font-size: 14px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    .form-group select:focus,
+    .form-group input[type="number"]:focus {
+      border-color: #4fc3f7;
+    }
+
+    .form-group select option {
+      background: #2a2a2a;
+      color: #fff;
+    }
+
+    .form-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .form-row .form-group {
+      margin-bottom: 0;
+    }
   </style>
 </head>
 <body>
@@ -189,6 +258,46 @@
     <p class="subtitle">Configure which websites and URLs to track</p>
 
     <div id="message"></div>
+
+    <div class="section">
+      <div class="section-header">
+        <h2>Time Limits</h2>
+        <span class="badge badge-settings">Limits</span>
+      </div>
+      <p class="section-description">Set daily and weekly time limits. The timer color will shift from green to red as you approach your limits.</p>
+
+      <form class="settings-form" id="settings-form">
+        <div class="form-group">
+          <label for="reset-day">Weekly Reset Day</label>
+          <select id="reset-day">
+            <option value="0">Sunday</option>
+            <option value="1">Monday</option>
+            <option value="2">Tuesday</option>
+            <option value="3">Wednesday</option>
+            <option value="4">Thursday</option>
+            <option value="5">Friday</option>
+            <option value="6">Saturday</option>
+          </select>
+          <p class="hint">The day of the week when your weekly timer resets to zero</p>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="daily-limit">Daily Limit (minutes)</label>
+            <input type="number" id="daily-limit" min="1" value="60">
+            <p class="hint">Per-site daily limit</p>
+          </div>
+
+          <div class="form-group">
+            <label for="weekly-limit">Weekly Limit (minutes)</label>
+            <input type="number" id="weekly-limit" min="1" value="420">
+            <p class="hint">Total across all sites</p>
+          </div>
+        </div>
+
+        <button type="submit">Save Settings</button>
+      </form>
+    </div>
 
     <div class="section">
       <div class="section-header">

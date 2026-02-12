@@ -5,6 +5,10 @@
   interface TimeDataResponse {
     siteTime: string;
     weeklyTotal: string;
+    siteTimeSeconds: number;
+    weeklyTotalSeconds: number;
+    dailyLimitSeconds: number;
+    weeklyLimitSeconds: number;
   }
 
   interface CheckTrackedResponse {
@@ -13,6 +17,10 @@
     domain?: string;
     siteTime?: string;
     weeklyTotal?: string;
+    siteTimeSeconds?: number;
+    weeklyTotalSeconds?: number;
+    dailyLimitSeconds?: number;
+    weeklyLimitSeconds?: number;
   }
 
   interface CheckSnoozeResponse {
@@ -28,6 +36,68 @@
   let minimizedIcon: HTMLDivElement | null = null;
   let isMinimized = false;
   let snoozeCheckInterval: number | null = null;
+
+  // Calculate color based on usage ratio (0 to 1+)
+  // 0-0.3: green, 0.3-0.6: yellow, 0.6-1.0: orange, 1.0+: red
+  function getColorForRatio(ratio: number): string {
+    if (ratio >= 1.0) {
+      return '#ff5252'; // Red - over limit
+    } else if (ratio >= 0.6) {
+      // Orange range (0.6 to 1.0)
+      const t = (ratio - 0.6) / 0.4;
+      const r = 255;
+      const g = Math.round(152 - (152 - 82) * t);
+      const b = Math.round(0 + 82 * (1 - t));
+      return `rgb(${r}, ${g}, ${b})`;
+    } else if (ratio >= 0.3) {
+      // Yellow range (0.3 to 0.6)
+      const t = (ratio - 0.3) / 0.3;
+      const r = 255;
+      const g = Math.round(235 - (235 - 152) * t);
+      const b = 0;
+      return `rgb(${r}, ${g}, ${b})`;
+    } else {
+      // Green range (0 to 0.3)
+      const t = ratio / 0.3;
+      const r = Math.round(76 + (255 - 76) * t);
+      const g = Math.round(175 + (235 - 175) * t);
+      const b = Math.round(80 - 80 * t);
+      return `rgb(${r}, ${g}, ${b})`;
+    }
+  }
+
+  // Update the color styling for time values
+  function updateColors(
+    siteTimeSeconds: number,
+    weeklyTotalSeconds: number,
+    dailyLimitSeconds: number,
+    weeklyLimitSeconds: number
+  ): void {
+    const siteEl = document.getElementById('wasted-timer-site');
+    const weeklyEl = document.getElementById('wasted-timer-weekly');
+
+    if (siteEl) {
+      const dailyRatio = siteTimeSeconds / dailyLimitSeconds;
+      const color = getColorForRatio(dailyRatio);
+      siteEl.style.color = color;
+      if (dailyRatio >= 1.0) {
+        siteEl.style.fontWeight = '700';
+      } else {
+        siteEl.style.fontWeight = '600';
+      }
+    }
+
+    if (weeklyEl) {
+      const weeklyRatio = weeklyTotalSeconds / weeklyLimitSeconds;
+      const color = getColorForRatio(weeklyRatio);
+      weeklyEl.style.color = color;
+      if (weeklyRatio >= 1.0) {
+        weeklyEl.style.fontWeight = '700';
+      } else {
+        weeklyEl.style.fontWeight = '600';
+      }
+    }
+  }
 
   // Initialize
   async function init(): Promise<void> {
@@ -71,6 +141,17 @@
     `;
 
     document.body.appendChild(overlay);
+
+    // Apply initial colors
+    if (data.siteTimeSeconds !== undefined && data.weeklyTotalSeconds !== undefined &&
+        data.dailyLimitSeconds !== undefined && data.weeklyLimitSeconds !== undefined) {
+      updateColors(
+        data.siteTimeSeconds,
+        data.weeklyTotalSeconds,
+        data.dailyLimitSeconds,
+        data.weeklyLimitSeconds
+      );
+    }
 
     // Add minimize button handler
     const minimizeBtn = overlay.querySelector('.wasted-timer-minimize');
@@ -141,7 +222,11 @@
       createOverlay({
         isTracked: true,
         siteTime: response.siteTime,
-        weeklyTotal: response.weeklyTotal
+        weeklyTotal: response.weeklyTotal,
+        siteTimeSeconds: response.siteTimeSeconds,
+        weeklyTotalSeconds: response.weeklyTotalSeconds,
+        dailyLimitSeconds: response.dailyLimitSeconds,
+        weeklyLimitSeconds: response.weeklyLimitSeconds
       });
     }
   }
@@ -175,6 +260,14 @@
 
       if (siteEl) siteEl.textContent = response.siteTime;
       if (weeklyEl) weeklyEl.textContent = response.weeklyTotal;
+
+      // Update colors based on limits
+      updateColors(
+        response.siteTimeSeconds,
+        response.weeklyTotalSeconds,
+        response.dailyLimitSeconds,
+        response.weeklyLimitSeconds
+      );
     }
   }
 
