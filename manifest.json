@@ -14,7 +14,7 @@
     "<all_urls>"
   ],
   "background": {
-    "scripts": ["dist/background.js"],
+    "scripts": ["dist/sync.js", "dist/background.js"],
     "persistent": true
   },
   "content_scripts": [

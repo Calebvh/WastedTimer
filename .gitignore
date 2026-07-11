@@ -2,3 +2,9 @@ node_modules/
 dist/
 .npm-cache/
 *.log
+
+# Backend (Kotlin/Gradle)
+backend/.gradle/
+backend/build/
+backend/.env
+

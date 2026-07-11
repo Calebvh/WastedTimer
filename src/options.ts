@@ -16,20 +16,155 @@
     weeklyLimitMinutes: number;
   }
 
+  interface AuthStatusResponse {
+    loggedIn: boolean;
+    email?: string;
+    serverUrl?: string;
+  }
+
+  interface AuthActionResponse {
+    success: boolean;
+    error?: string;
+  }
+
+  interface DeviceInfo {
+    deviceId: string;
+    deviceName: string;
+    createdAt: string;
+    lastSeenAt: string;
+    isCurrent: boolean;
+  }
+
+  interface ListDevicesResponse {
+    devices: DeviceInfo[];
+    error?: string;
+  }
+
   // Initialize
   async function init(): Promise<void> {
     await loadPatterns();
     await loadSettings();
     renderLists();
     renderSettings();
+    await refreshAccountView();
 
     const domainForm = document.getElementById('add-domain-form') as HTMLFormElement;
     const urlForm = document.getElementById('add-url-form') as HTMLFormElement;
     const settingsForm = document.getElementById('settings-form') as HTMLFormElement;
+    const accountForm = document.getElementById('account-form') as HTMLFormElement;
+    const registerBtn = document.getElementById('account-register-btn') as HTMLButtonElement;
+    const logoutBtn = document.getElementById('account-logout-btn') as HTMLButtonElement;
 
     domainForm.addEventListener('submit', handleAddDomain);
     urlForm.addEventListener('submit', handleAddUrl);
     settingsForm.addEventListener('submit', handleSaveSettings);
+    accountForm.addEventListener('submit', (e) => handleAccountSubmit(e, 'login'));
+    registerBtn.addEventListener('click', (e) => handleAccountSubmit(e, 'register'));
+    logoutBtn.addEventListener('click', handleLogout);
+  }
+
+  // Read the account form's fields
+  function getAccountFormValues(): { serverUrl: string; email: string; password: string; deviceName: string } {
+    const serverUrl = (document.getElementById('account-server-url') as HTMLInputElement).value.trim().replace(/\/$/, '');
+    const email = (document.getElementById('account-email') as HTMLInputElement).value.trim();
+    const password = (document.getElementById('account-password') as HTMLInputElement).value;
+    const deviceName = (document.getElementById('account-device-name') as HTMLInputElement).value.trim();
+    return { serverUrl, email, password, deviceName };
+  }
+
+  // Handle login/register form submission
+  async function handleAccountSubmit(e: Event, action: 'login' | 'register'): Promise<void> {
+    e.preventDefault();
+
+    const { serverUrl, email, password, deviceName } = getAccountFormValues();
+    if (!serverUrl || !email || !password || !deviceName) {
+      showMessage('Please fill in all account fields', 'error');
+      return;
+    }
+
+    const response = await browser.runtime.sendMessage({
+      type: action,
+      serverUrl,
+      email,
+      password,
+      deviceName
+    }) as AuthActionResponse;
+
+    if (response.success) {
+      showMessage(action === 'login' ? 'Logged in' : 'Account created and logged in', 'success');
+      await refreshAccountView();
+    } else {
+      showMessage(response.error || `${action === 'login' ? 'Login' : 'Registration'} failed`, 'error');
+    }
+  }
+
+  // Handle logging out this device
+  async function handleLogout(): Promise<void> {
+    await browser.runtime.sendMessage({ type: 'logout' });
+    showMessage('Logged out', 'success');
+    await refreshAccountView();
+  }
+
+  // Handle revoking a device's session
+  async function handleRevokeDevice(deviceId: string): Promise<void> {
+    const response = await browser.runtime.sendMessage({ type: 'revokeDevice', deviceId }) as AuthActionResponse;
+    if (response.success) {
+      showMessage('Device revoked', 'success');
+      await renderDeviceList();
+    } else {
+      showMessage(response.error || 'Failed to revoke device', 'error');
+    }
+  }
+
+  // Refresh the account section (logged-in vs logged-out view)
+  async function refreshAccountView(): Promise<void> {
+    const status = await browser.runtime.sendMessage({ type: 'authStatus' }) as AuthStatusResponse;
+
+    const loggedOutEl = document.getElementById('account-logged-out');
+    const loggedInEl = document.getElementById('account-logged-in');
+    if (!loggedOutEl || !loggedInEl) return;
+
+    if (status.loggedIn) {
+      loggedOutEl.style.display = 'none';
+      loggedInEl.style.display = '';
+
+      const emailEl = document.getElementById('account-email-display');
+      const serverEl = document.getElementById('account-server-display');
+      if (emailEl) emailEl.textContent = status.email || '';
+      if (serverEl) serverEl.textContent = status.serverUrl || '';
+
+      await renderDeviceList();
+    } else {
+      loggedOutEl.style.display = '';
+      loggedInEl.style.display = 'none';
+    }
+  }
+
+  // Render the list of devices synced to this account
+  async function renderDeviceList(): Promise<void> {
+    const listEl = document.getElementById('device-list');
+    if (!listEl) return;
+
+    const response = await browser.runtime.sendMessage({ type: 'listDevices' }) as ListDevicesResponse;
+    if (response.error || response.devices.length === 0) {
+      listEl.innerHTML = `<div class="empty-state">${response.error ? escapeHtml(response.error) : 'No devices yet'}</div>`;
+      return;
+    }
+
+    listEl.innerHTML = response.devices.map(device => `
+      <div class="list-item">
+        <span class="item-name">
+          ${escapeHtml(device.deviceName)}
+          ${device.isCurrent ? '<span class="badge badge-current">Current</span>' : ''}
+        </span>
+        ${device.isCurrent ? '' : `<button class="delete-btn" data-device-id="${escapeHtml(device.deviceId)}">Revoke</button>`}
+      </div>
+    `).join('');
+
+    listEl.querySelectorAll('.delete-btn').forEach(btn => {
+      const button = btn as HTMLButtonElement;
+      button.addEventListener('click', () => handleRevokeDevice(button.dataset.deviceId || ''));
+    });
   }
 
   // Load tracked patterns from storage

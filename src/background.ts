@@ -37,11 +37,54 @@
   interface Message {
     type: string;
     url?: string;
+    serverUrl?: string;
+    email?: string;
+    password?: string;
+    deviceName?: string;
+    deviceId?: string;
   }
 
   interface TrackedPatterns {
     domains: string[];
     urls: string[];
+  }
+
+  interface PatternKeyIndexEntry {
+    patternType: string;
+    patternValue: string;
+    date: string;
+  }
+
+  interface AuthStatusResponse {
+    loggedIn: boolean;
+    email?: string;
+    serverUrl?: string;
+  }
+
+  interface DeviceInfo {
+    deviceId: string;
+    deviceName: string;
+    createdAt: string;
+    lastSeenAt: string;
+    isCurrent: boolean;
+  }
+
+  interface WastedTimerSyncApi {
+    start(): void;
+    stop(): void;
+    register(serverUrl: string, email: string, password: string, deviceName: string): Promise<void>;
+    login(serverUrl: string, email: string, password: string, deviceName: string): Promise<void>;
+    logout(): Promise<void>;
+    getAuthStatus(): Promise<AuthStatusResponse>;
+    listDevices(): Promise<{ devices: DeviceInfo[] }>;
+    revokeDevice(deviceId: string): Promise<void>;
+    pushPatternsNow(): Promise<void>;
+    pushSettingsNow(): Promise<void>;
+    shouldSuppressAutoSync(): boolean;
+  }
+
+  function getSync(): WastedTimerSyncApi {
+    return (self as unknown as { WastedTimerSync: WastedTimerSyncApi }).WastedTimerSync;
   }
 
   let activeTabId: number | null = null;
@@ -53,12 +96,14 @@
     dailyLimitMinutes: 60,
     weeklyLimitMinutes: 420
   };
+  let patternKeyIndex: Record<string, PatternKeyIndexEntry> = {};
   const snoozeState: Record<number, number> = {}; // tabId -> snoozeEndTime
 
   // Initialize extension
   async function init(): Promise<void> {
     await loadTrackedPatterns();
     await loadSettings();
+    await loadPatternKeyIndex();
 
     // Start the tracking interval
     setInterval(updateTime, 1000);
@@ -83,8 +128,23 @@
         if (changes.settings) {
           settings = changes.settings.newValue || settings;
         }
+
+        // Immediately push local edits to the sync server, unless this change
+        // was caused by sync.ts itself writing pulled remote state back in
+        // (which would otherwise trigger an infinite push/pull loop).
+        if (!getSync().shouldSuppressAutoSync()) {
+          if (changes.trackedDomains || changes.trackedUrls) {
+            void getSync().pushPatternsNow();
+          }
+          if (changes.settings) {
+            void getSync().pushSettingsNow();
+          }
+        }
       }
     });
+
+    // Start the periodic account sync loop (no-op until the user logs in)
+    getSync().start();
 
     // Get the current active tab
     const tabs = await browser.tabs.query({ active: true, currentWindow: true });
@@ -108,6 +168,13 @@
     if (result.settings) {
       settings = result.settings as Settings;
     }
+  }
+
+  // Load the pattern-key index (maps sanitized storage keys back to their
+  // original pattern type/value, since getStorageKey's sanitization is lossy)
+  async function loadPatternKeyIndex(): Promise<void> {
+    const result = await browser.storage.local.get('patternKeyIndex');
+    patternKeyIndex = (result.patternKeyIndex as Record<string, PatternKeyIndexEntry>) || {};
   }
 
   // Extract domain from URL
@@ -191,6 +258,13 @@
     return `time_${sanitized}_${date}`;
   }
 
+  // Get storage key for a pattern/date's synced-from-other-devices seconds
+  // (mirrors getStorageKey's sanitization; written by sync.ts, read here)
+  function getRemoteStorageKey(pattern: string, date: string): string {
+    const sanitized = pattern.replace(/[^a-zA-Z0-9:]/g, '_');
+    return `remote_${sanitized}_${date}`;
+  }
+
   // Update time for the active tab
   async function updateTime(): Promise<void> {
     if (!activeTabId || !activeTabUrl || !activeMatchedPattern) {
@@ -206,6 +280,18 @@
 
     // Increment by 1 second
     await browser.storage.local.set({ [storageKey]: currentTime + 1 });
+
+    // Record which pattern/date this storage key represents, since the key
+    // sanitization above is lossy - sync.ts needs this to push stats correctly.
+    if (!(storageKey in patternKeyIndex)) {
+      const colonIdx = activeMatchedPattern.indexOf(':');
+      patternKeyIndex[storageKey] = {
+        patternType: activeMatchedPattern.substring(0, colonIdx),
+        patternValue: activeMatchedPattern.substring(colonIdx + 1),
+        date: today
+      };
+      await browser.storage.local.set({ patternKeyIndex });
+    }
 
     // Notify the content script to update the display
     try {
@@ -223,17 +309,18 @@
     const today = getTodayKey();
     const weekStart = getWeekStartDate();
 
-    // Get today's time for this pattern
+    // Get today's time for this pattern (local tracking + other devices' synced total)
     const todayKey = getStorageKey(pattern, today);
-    const todayResult = await browser.storage.local.get(todayKey);
-    const siteTime = (todayResult[todayKey] as number) || 0;
+    const todayRemoteKey = getRemoteStorageKey(pattern, today);
+    const todayResult = await browser.storage.local.get([todayKey, todayRemoteKey]);
+    const siteTime = ((todayResult[todayKey] as number) || 0) + ((todayResult[todayRemoteKey] as number) || 0);
 
-    // Calculate weekly total across all tracked patterns
+    // Calculate weekly total across all tracked patterns (local + synced remote)
     let weeklyTotal = 0;
     const allKeys = await browser.storage.local.get(null);
 
     for (const [key, value] of Object.entries(allKeys)) {
-      if (key.startsWith('time_')) {
+      if (key.startsWith('time_') || key.startsWith('remote_')) {
         const parts = key.split('_');
         const dateStr = parts[parts.length - 1];
 
@@ -303,11 +390,31 @@
     }
   }
 
+  interface AuthActionResponse {
+    success: boolean;
+    error?: string;
+  }
+
+  interface ListDevicesResponse {
+    devices: DeviceInfo[];
+    error?: string;
+  }
+
+  type HandleMessageResponse =
+    | CheckTrackedResponse
+    | GetTimeDataResponse
+    | { success: boolean }
+    | { isSnoozed: boolean }
+    | AuthStatusResponse
+    | AuthActionResponse
+    | ListDevicesResponse
+    | null;
+
   // Handle messages from content scripts
   function handleMessage(
     message: Message,
     sender: browser.runtime.MessageSender
-  ): Promise<CheckTrackedResponse | GetTimeDataResponse | { success: boolean } | { isSnoozed: boolean } | null> | undefined {
+  ): Promise<HandleMessageResponse> | undefined {
     const tabId = sender.tab?.id;
 
     switch (message.type) {
@@ -374,6 +481,71 @@
           delete snoozeState[tabId];
         }
         return Promise.resolve({ success: true });
+      }
+
+      case 'authStatus': {
+        return getSync().getAuthStatus();
+      }
+
+      case 'register': {
+        return (async (): Promise<AuthActionResponse> => {
+          try {
+            await getSync().register(
+              message.serverUrl || '',
+              message.email || '',
+              message.password || '',
+              message.deviceName || ''
+            );
+            return { success: true };
+          } catch (err) {
+            return { success: false, error: err instanceof Error ? err.message : 'Registration failed' };
+          }
+        })();
+      }
+
+      case 'login': {
+        return (async (): Promise<AuthActionResponse> => {
+          try {
+            await getSync().login(
+              message.serverUrl || '',
+              message.email || '',
+              message.password || '',
+              message.deviceName || ''
+            );
+            return { success: true };
+          } catch (err) {
+            return { success: false, error: err instanceof Error ? err.message : 'Login failed' };
+          }
+        })();
+      }
+
+      case 'logout': {
+        return (async (): Promise<AuthActionResponse> => {
+          await getSync().logout();
+          return { success: true };
+        })();
+      }
+
+      case 'listDevices': {
+        return (async (): Promise<ListDevicesResponse> => {
+          try {
+            const result = await getSync().listDevices();
+            return { devices: result.devices };
+          } catch (err) {
+            return { devices: [], error: err instanceof Error ? err.message : 'Failed to list devices' };
+          }
+        })();
+      }
+
+      case 'revokeDevice': {
+        return (async (): Promise<AuthActionResponse> => {
+          try {
+            await getSync().revokeDevice(message.deviceId || '');
+            return { success: true };
+          } catch (err) {
+            return { success: false, error: err instanceof Error ? err.message : 'Failed to revoke device' };
+          }
+        })();
       }
     }
 
